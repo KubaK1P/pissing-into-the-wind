@@ -73,12 +73,35 @@ var _key_player: AudioStreamPlayer
 # Global sustain pedal state
 var _is_pedal_depressed: bool = false
 
+## Static singleton reference for global access
+static var instance: AudioManager
+
+
+## Retrieves or instantiates the global AudioManager in the active SceneTree.
+static func get_instance() -> AudioManager:
+	if instance == null or not is_instance_valid(instance):
+		var tree := Engine.get_main_loop() as SceneTree
+		if tree != null and tree.root != null:
+			if tree.root.has_node("AudioManager"):
+				instance = tree.root.get_node("AudioManager") as AudioManager
+			else:
+				var mgr := AudioManager.new()
+				mgr.name = "AudioManager"
+				tree.root.add_child(mgr)
+				mgr._ensure_initialized()
+				instance = mgr
+	return instance
+
 
 func _enter_tree() -> void:
+	if instance == null:
+		instance = self
 	_ensure_initialized()
 
 
 func _ready() -> void:
+	if instance == null:
+		instance = self
 	_ensure_initialized()
 
 
@@ -107,7 +130,9 @@ func _init_voice_pool() -> void:
 			"player": player,
 			"voice_id": 0,
 			"pitch": -1,
+			"lane": -1,
 			"is_sustain": false,
+			"is_key_held": false,
 			"start_ticks": 0,
 			"active_tween": null
 		})
@@ -138,6 +163,8 @@ func _acquire_voice() -> Dictionary:
 		var player: AudioStreamPlayer = voice["player"]
 		if not player.playing:
 			_clean_voice_tween(voice)
+			voice["is_key_held"] = false
+			voice["lane"] = -1
 			return voice
 
 	# 2. All players are busy: apply LRU voice-stealing (oldest start_ticks)
@@ -154,6 +181,8 @@ func _acquire_voice() -> Dictionary:
 	_clean_voice_tween(oldest_voice)
 	var stolen_player: AudioStreamPlayer = oldest_voice["player"]
 	stolen_player.stop()
+	oldest_voice["is_key_held"] = false
+	oldest_voice["lane"] = -1
 
 	return oldest_voice
 
@@ -310,23 +339,54 @@ func _get_stream_for_pitch(target_pitch: int) -> Dictionary:
 # ==============================================================================
 
 ## Primary rhythm game entry point: plays a note directly from a NoteEvent resource.
-func play_note_event(event: NoteEvent) -> AudioStreamPlayer:
-	if event == null:
+static func play_note_event(event: NoteEvent) -> AudioStreamPlayer:
+	var mgr := get_instance()
+	if mgr == null:
 		return null
-	return play_pitch(event.pitch_name, event.is_sustain, event.duration_ms)
+	return mgr.play_note_event_instance(event)
 
 
 ## Plays a note by scientific pitch name (e.g. "C4", "F#3") with sustain awareness.
-func play_pitch(pitch_name: String, is_sustain: bool = false, duration_ms: float = 0.0) -> AudioStreamPlayer:
+static func play_pitch(pitch_name: String, is_sustain: bool = false, duration_ms: float = 0.0, lane: int = -1) -> AudioStreamPlayer:
+	var mgr := get_instance()
+	if mgr == null:
+		return null
+	return mgr.play_pitch_instance(pitch_name, is_sustain, duration_ms, lane)
+
+
+## Releases a note in a specific lane immediately (dampens the voice unless sustained).
+static func release_lane(lane: int) -> void:
+	var mgr := get_instance()
+	if mgr != null:
+		mgr.release_lane_instance(lane)
+
+
+## Releases a note by pitch name immediately (dampens the voice unless sustained).
+static func release_pitch(pitch_name: String) -> void:
+	var mgr := get_instance()
+	if mgr != null:
+		mgr.release_pitch_instance(pitch_name)
+
+
+## Instance method: plays a note directly from a NoteEvent resource.
+func play_note_event_instance(event: NoteEvent) -> AudioStreamPlayer:
+	if event == null:
+		return null
+	var pitch_num := NoteEvent.pitch_name_to_midi(event.pitch_name)
+	return play_midi_pitch(pitch_num, event.is_sustain, event.duration_ms, event.lane)
+
+
+## Instance method: plays a note by pitch name with sustain awareness.
+func play_pitch_instance(pitch_name: String, is_sustain: bool = false, duration_ms: float = 0.0, lane: int = -1) -> AudioStreamPlayer:
 	var pitch_num := NoteEvent.pitch_name_to_midi(pitch_name)
 	if pitch_num < 0:
 		push_warning("AudioManager: Cannot play unknown pitch name: '%s'" % pitch_name)
 		return null
-	return play_midi_pitch(pitch_num, is_sustain, duration_ms)
+	return play_midi_pitch(pitch_num, is_sustain, duration_ms, lane)
 
 
 ## Plays a note by MIDI pitch number (0-127).
-func play_midi_pitch(pitch_num: int, is_sustain: bool = false, duration_ms: float = 0.0) -> AudioStreamPlayer:
+func play_midi_pitch(pitch_num: int, is_sustain: bool = false, duration_ms: float = 0.0, lane: int = -1) -> AudioStreamPlayer:
 	var sample_info := _get_stream_for_pitch(pitch_num)
 	if sample_info["stream"] == null:
 		push_warning("AudioManager: No sample available to play pitch %d" % pitch_num)
@@ -347,26 +407,55 @@ func play_midi_pitch(pitch_num: int, is_sustain: bool = false, duration_ms: floa
 	# Update voice record
 	voice["voice_id"] = current_voice_id
 	voice["pitch"] = pitch_num
-	voice["is_sustain"] = is_sustain or _is_pedal_depressed
+	voice["lane"] = lane
+	voice["is_sustain"] = is_sustain
+	voice["is_key_held"] = true
 	voice["start_ticks"] = Time.get_ticks_msec()
 
-	# Sustain handling:
-	# If sustain is active (either on note or via physical pedal), let the note ring out fully.
-	# If sustain is false and duration_ms > 0, schedule natural damper release at key release.
-	if not voice["is_sustain"] and duration_ms > 0.0:
+	# When note is triggered with duration_ms > 0:
+	# Schedule volume fade-out (damper drop) when duration expires,
+	# unless sustain (is_sustain or global sustain) is active.
+	if duration_ms > 0.0:
 		_schedule_damper_release(voice, current_voice_id, duration_ms / 1000.0)
 
 	return player
 
 
-## Schedules dampening of the string when a non-sustained key is released.
+## Schedules dampening of the string when note duration expires.
 func _schedule_damper_release(voice: Dictionary, expected_voice_id: int, hold_seconds: float) -> void:
 	var timer := get_tree().create_timer(hold_seconds)
 	timer.timeout.connect(func() -> void:
-		# Check if the voice is still playing the exact same note trigger and sustain wasn't pressed
-		if voice["voice_id"] == expected_voice_id and not _is_pedal_depressed:
-			_dampen_voice(voice)
+		# Check if the voice is still playing the exact same note trigger
+		if voice["voice_id"] == expected_voice_id and voice["player"].playing:
+			voice["is_key_held"] = false
+			# Dampen unless sustain pedal or note is_sustain is active
+			if not voice["is_sustain"] and not _is_pedal_depressed:
+				_dampen_voice(voice)
 	)
+
+
+## Releases a note in a specific lane early (e.g. key released before duration expired).
+func release_lane_instance(lane: int) -> void:
+	for voice in _voice_pool:
+		var player: AudioStreamPlayer = voice["player"]
+		if player.playing and voice["lane"] == lane:
+			voice["is_key_held"] = false
+			# Trigger damper dampening immediately unless sustain is active
+			if not voice["is_sustain"] and not _is_pedal_depressed:
+				_dampen_voice(voice)
+
+
+## Releases a note by pitch name early.
+func release_pitch_instance(pitch_name: String) -> void:
+	var pitch_num := NoteEvent.pitch_name_to_midi(pitch_name)
+	if pitch_num < 0:
+		return
+	for voice in _voice_pool:
+		var player: AudioStreamPlayer = voice["player"]
+		if player.playing and voice["pitch"] == pitch_num:
+			voice["is_key_held"] = false
+			if not voice["is_sustain"] and not _is_pedal_depressed:
+				_dampen_voice(voice)
 
 
 ## Applies gentle string damping and triggers the atmospheric damper clack.
@@ -425,43 +514,74 @@ func stop_all_voices(fade_time: float = 0.05) -> void:
 # ==============================================================================
 
 ## Sets the global sustain pedal state, triggering mechanical sounds and voice damping.
-func set_sustain_pedal(depressed: bool) -> void:
+static func set_sustain_pedal(depressed: bool) -> void:
+	var mgr := get_instance()
+	if mgr != null:
+		mgr.set_sustain_pedal_instance(depressed)
+
+
+## Plays the mechanical pedal down thud / acoustic soundboard resonance.
+static func play_pedal_down(volume_scale: float = 1.0) -> void:
+	var mgr := get_instance()
+	if mgr != null:
+		mgr.play_pedal_down_instance(volume_scale)
+
+
+## Plays the mechanical pedal up clunk / damper assembly return sound.
+static func play_pedal_up(volume_scale: float = 1.0) -> void:
+	var mgr := get_instance()
+	if mgr != null:
+		mgr.play_pedal_up_instance(volume_scale)
+
+
+## Plays the subtle felt damper falling back onto piano strings.
+static func play_damper_release(volume_scale: float = 1.0) -> void:
+	var mgr := get_instance()
+	if mgr != null:
+		mgr.play_damper_release_instance(volume_scale)
+
+
+## Plays subtle wooden keybed click when striking or releasing keys.
+static func play_key_click(volume_scale: float = 1.0) -> void:
+	var mgr := get_instance()
+	if mgr != null:
+		mgr.play_key_click_instance(volume_scale)
+
+
+## Instance method: sets global sustain pedal state.
+func set_sustain_pedal_instance(depressed: bool) -> void:
 	if _is_pedal_depressed == depressed:
 		return
 
 	_is_pedal_depressed = depressed
 
 	if _is_pedal_depressed:
-		play_pedal_down()
-		# Mark all currently sounding notes as sustained so they ring out
-		for voice in _voice_pool:
-			if voice["player"].playing:
-				voice["is_sustain"] = true
+		play_pedal_down_instance()
 	else:
-		play_pedal_up()
-		# Release pedal: dampen any voices that aren't individually marked sustain
+		play_pedal_up_instance()
+		# Release pedal: dampen any voices whose keys are not currently held and aren't individually marked sustain
 		for voice in _voice_pool:
-			if voice["player"].playing and not voice["is_sustain"]:
+			if voice["player"].playing and not voice["is_sustain"] and not voice["is_key_held"]:
 				_dampen_voice(voice)
 
 
-## Plays the mechanical pedal down thud / acoustic soundboard resonance.
-func play_pedal_down(volume_scale: float = 1.0) -> void:
+## Instance method: pedal down thud.
+func play_pedal_down_instance(volume_scale: float = 1.0) -> void:
 	_play_mechanical_stream(_pedal_player, pedal_down_samples, volume_scale)
 
 
-## Plays the mechanical pedal up clunk / damper assembly return sound.
-func play_pedal_up(volume_scale: float = 1.0) -> void:
+## Instance method: pedal up clunk.
+func play_pedal_up_instance(volume_scale: float = 1.0) -> void:
 	_play_mechanical_stream(_pedal_player, pedal_up_samples, volume_scale)
 
 
-## Plays the subtle felt damper falling back onto piano strings.
-func play_damper_release(volume_scale: float = 1.0) -> void:
+## Instance method: damper release.
+func play_damper_release_instance(volume_scale: float = 1.0) -> void:
 	_play_mechanical_stream(_damper_player, damper_release_samples, volume_scale * 0.7)
 
 
-## Plays subtle wooden keybed click when striking or releasing keys.
-func play_key_click(volume_scale: float = 1.0) -> void:
+## Instance method: keybed click.
+func play_key_click_instance(volume_scale: float = 1.0) -> void:
 	_play_mechanical_stream(_key_player, key_click_samples, volume_scale * 0.5)
 
 

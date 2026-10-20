@@ -1,0 +1,156 @@
+[
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 0,
+		"pitch_name": "C4",
+		"timestamp_ms": 800.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 1,
+		"pitch_name": "E4",
+		"timestamp_ms": 1200.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 2,
+		"pitch_name": "G4",
+		"timestamp_ms": 1600.0
+	},
+	{
+		"duration_ms": 800.0,
+		"is_sustain": true,
+		"lane": 3,
+		"pitch_name": "C5",
+		"timestamp_ms": 2000.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 2,
+		"pitch_name": "G4",
+		"timestamp_ms": 2400.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 1,
+		"pitch_name": "E4",
+		"timestamp_ms": 2800.0
+	},
+	{
+		"duration_ms": 800.0,
+		"is_sustain": false,
+		"lane": 0,
+		"pitch_name": "C4",
+		"timestamp_ms": 3200.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 0,
+		"pitch_name": "D4",
+		"timestamp_ms": 3600.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 1,
+		"pitch_name": "F#4",
+		"timestamp_ms": 4000.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 2,
+		"pitch_name": "A4",
+		"timestamp_ms": 4400.0
+	},
+	{
+		"duration_ms": 800.0,
+		"is_sustain": true,
+		"lane": 3,
+		"pitch_name": "D5",
+		"timestamp_ms": 4800.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 2,
+		"pitch_name": "A4",
+		"timestamp_ms": 5200.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 1,
+		"pitch_name": "F#4",
+		"timestamp_ms": 5600.0
+	},
+	{
+		"duration_ms": 800.0,
+		"is_sustain": false,
+		"lane": 0,
+		"pitch_name": "D4",
+		"timestamp_ms": 6000.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 0,
+		"pitch_name": "C4",
+		"timestamp_ms": 6400.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 1,
+		"pitch_name": "G4",
+		"timestamp_ms": 6800.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 2,
+		"pitch_name": "E4",
+		"timestamp_ms": 7200.0
+	},
+	{
+		"duration_ms": 400.0,
+		"is_sustain": false,
+		"lane": 3,
+		"pitch_name": "C5",
+		"timestamp_ms": 7600.0
+	},
+	{
+		"duration_ms": 800.0,
+		"is_sustain": true,
+		"lane": 0,
+		"pitch_name": "E4",
+		"timestamp_ms": 8000.0
+	},
+	{
+		"duration_ms": 800.0,
+		"is_sustain": true,
+		"lane": 1,
+		"pitch_name": "G4",
+		"timestamp_ms": 8400.0
+	},
+	{
+		"duration_ms": 800.0,
+		"is_sustain": true,
+		"lane": 2,
+		"pitch_name": "B4",
+		"timestamp_ms": 8800.0
+	},
+	{
+		"duration_ms": 1600.0,
+		"is_sustain": true,
+		"lane": 3,
+		"pitch_name": "E5",
+		"timestamp_ms": 9200.0
+	}
+]
