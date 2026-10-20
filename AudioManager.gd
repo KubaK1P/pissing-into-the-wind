@@ -428,9 +428,9 @@ func _schedule_damper_release(voice: Dictionary, expected_voice_id: int, hold_se
 		# Check if the voice is still playing the exact same note trigger
 		if voice["voice_id"] == expected_voice_id and voice["player"].playing:
 			voice["is_key_held"] = false
-			# Dampen unless sustain pedal or note is_sustain is active
-			if not voice["is_sustain"] and not _is_pedal_depressed:
-				_dampen_voice(voice)
+			# When sustain pedal is true, ignore dampening and let full natural tail ring out
+			if not _is_pedal_depressed and not voice["is_sustain"]:
+				_dampen_voice(voice, 0.08)
 	)
 
 
@@ -440,9 +440,9 @@ func release_lane_instance(lane: int) -> void:
 		var player: AudioStreamPlayer = voice["player"]
 		if player.playing and voice["lane"] == lane:
 			voice["is_key_held"] = false
-			# Trigger damper dampening immediately unless sustain is active
-			if not voice["is_sustain"] and not _is_pedal_depressed:
-				_dampen_voice(voice)
+			# When sustain pedal is true, ignore key-release dampening and let full natural tail ring out
+			if not _is_pedal_depressed and not voice["is_sustain"]:
+				_dampen_voice(voice, 0.08)
 
 
 ## Releases a note by pitch name early.
@@ -454,24 +454,27 @@ func release_pitch_instance(pitch_name: String) -> void:
 		var player: AudioStreamPlayer = voice["player"]
 		if player.playing and voice["pitch"] == pitch_num:
 			voice["is_key_held"] = false
-			if not voice["is_sustain"] and not _is_pedal_depressed:
-				_dampen_voice(voice)
+			# When sustain pedal is true, ignore key-release dampening and let full natural tail ring out
+			if not _is_pedal_depressed and not voice["is_sustain"]:
+				_dampen_voice(voice, 0.08)
 
 
-## Applies gentle string damping and triggers the atmospheric damper clack.
-func _dampen_voice(voice: Dictionary) -> void:
+## Applies gentle string damping (smooth volume fade) and triggers the atmospheric damper clack.
+func _dampen_voice(voice: Dictionary, fade_time: float = -1.0) -> void:
 	var player: AudioStreamPlayer = voice["player"]
 	if not player.playing:
 		return
 
 	_clean_voice_tween(voice)
 
+	var effective_fade: float = fade_time if fade_time > 0.0 else damper_fade_time
 	var tween := create_tween()
 	voice["active_tween"] = tween
-	tween.tween_property(player, "volume_db", -80.0, damper_fade_time)
+	tween.tween_property(player, "volume_db", -80.0, effective_fade)
 	tween.tween_callback(func() -> void:
 		player.stop()
 		player.volume_db = piano_volume_db
+		voice["active_tween"] = null
 	)
 
 	# Trigger subtle physical damper sound
@@ -557,12 +560,18 @@ func set_sustain_pedal_instance(depressed: bool) -> void:
 
 	if _is_pedal_depressed:
 		play_pedal_down_instance()
+		# If any currently playing voice was dampening, cancel fade and let full tail ring out
+		for voice in _voice_pool:
+			if voice["player"].playing and voice["active_tween"] != null:
+				_clean_voice_tween(voice)
+				voice["player"].volume_db = piano_volume_db
 	else:
 		play_pedal_up_instance()
-		# Release pedal: dampen any voices whose keys are not currently held and aren't individually marked sustain
+		# When pedal is released: immediately apply a smooth 80ms volume fade (damper drop)
+		# to any active voices that are not currently being held down by a physical key press
 		for voice in _voice_pool:
-			if voice["player"].playing and not voice["is_sustain"] and not voice["is_key_held"]:
-				_dampen_voice(voice)
+			if voice["player"].playing and not voice["is_key_held"]:
+				_dampen_voice(voice, 0.08)
 
 
 ## Instance method: pedal down thud.
